@@ -370,30 +370,58 @@ def copiar_resultado():
 
 def consultar_resultado():
     """
-    Executa a consulta e tenta copiar o resultado.
-    Se a primeira tentativa falhar, repete o clique e a cópia
-    uma única vez, desde que Cadastro de Férias continue aberto.
+    Tenta copiar o resultado.
+    Se falhar, executa a recuperação e tenta copiar novamente.
     """
-    for tentativa in range(1, 3):
-        if not cadastro_aberto():
-            print("Consulta cancelada: Cadastro de Férias não está aberto.")
-            return ""
 
-        print(f"Tentativa de consulta {tentativa}/2...")
+    if not cadastro_aberto():
+        print("Consulta cancelada: Cadastro de Férias não está aberto.")
+        return ""
 
-        pyautogui.click(X_DATA, Y_DATA)
-        time.sleep(INTERVALO)
+    print("Tentando copiar o resultado...")
 
-        if not cadastro_aberto():
-            print("Cadastro de Férias foi fechado durante a consulta.")
-            return ""
+    pyautogui.click(X_DATA, Y_DATA)
+    time.sleep(INTERVALO)
 
+    if cadastro_aberto():
         conteudo = copiar_resultado()
 
         if conteudo:
             return conteudo
 
+    print("Falha na primeira cópia. Iniciando recuperação...")
+
+    recuperar_copia()
+
+    # A recuperação já retornou a tela ao Menu.
+    # Não pressionar Esc novamente.
+    print("Tentando Ctrl+C novamente...")
+    conteudo = copiar_resultado()
+
+    if conteudo:
+        return conteudo
+
+    print("Não foi possível copiar o resultado após a recuperação.")
     return ""
+
+
+def recuperar_copia():
+    """
+    Executa a sequência de recuperação quando não consegue copiar.
+    Ao final, a tela já estará no Menu.
+    """
+    print("Executando recuperação da cópia...")
+
+    pyautogui.press("esc")
+    time.sleep(INTERVALO)
+
+    pyautogui.click(895, 360)
+    time.sleep(INTERVALO)
+
+    pyautogui.click(1300, 399)
+    time.sleep(INTERVALO)
+
+    print("Recuperação concluída. Continuando com Ctrl+C.")
 
 
 # ============================================================
