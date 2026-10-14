@@ -2,11 +2,17 @@ import argparse
 import time
 from pathlib import Path
 
+import re
+
+from openpyxl.styles import PatternFill
+
 import pyautogui
 import pyperclip
 import win32gui
 from pywinauto import Desktop
 from openpyxl import load_workbook
+
+from datetime import date, datetime, timedelta
 
 
 # ============================================================
@@ -29,6 +35,11 @@ Y_DATA = 494
 INTERVALO = 0.3
 INTERVALO_VERIFICACAO = 0.5
 
+ROSA_CLARO = PatternFill(
+    fill_type="solid",
+    start_color="FFFFC0CB",
+    end_color="FFFFC0CB",
+)
 
 # ============================================================
 # LISTAGEM E IDENTIFICAÇÃO DE JANELAS
@@ -187,7 +198,7 @@ def ler_conteudo_copiado(timeout=3):
 # PROCESSAMENTO
 # ============================================================
 
-def processar_pessoa(nome, numero_linha):
+def processar_pessoa(nome, numero_linha, planilha):
     print(f"\n{'=' * 50}")
     print(f"Linha {numero_linha}: {nome}")
 
@@ -244,7 +255,7 @@ def processar_pessoa(nome, numero_linha):
         return None
 
     # ETAPA 6: consultar e tentar copiar o resultado duas vezes.
-    conteudo = consultar_resultado()
+    conteudo = consultar_resultado(planilha, numero_linha)
 
     if not conteudo:
         print(
@@ -368,7 +379,7 @@ def copiar_resultado():
     return conteudo
 
 
-def consultar_resultado():
+def consultar_resultado(planilha, numero_linha):
     """
     Tenta copiar o resultado.
     Se falhar, executa a recuperação e tenta copiar novamente.
@@ -391,7 +402,7 @@ def consultar_resultado():
 
     print("Falha na primeira cópia. Iniciando recuperação...")
 
-    recuperar_copia()
+    recuperar_copia(planilha, numero_linha)
 
     # A recuperação já retornou a tela ao Menu.
     # Não pressionar Esc novamente.
@@ -405,12 +416,15 @@ def consultar_resultado():
     return ""
 
 
-def recuperar_copia():
+def recuperar_copia(planilha, numero_linha):
     """
-    Executa a sequência de recuperação quando não consegue copiar.
-    Ao final, a tela já estará no Menu.
+    Executa a recuperação e marca o resultado na coluna B em rosa-claro.
     """
+
     print("Executando recuperação da cópia...")
+
+    # Marca o resultado da pessoa na coluna B.
+    planilha.cell(numero_linha, 3).fill = ROSA_CLARO
 
     pyautogui.press("esc")
     time.sleep(INTERVALO)
@@ -422,6 +436,264 @@ def recuperar_copia():
     time.sleep(INTERVALO)
 
     print("Recuperação concluída. Continuando com Ctrl+C.")
+
+
+def extrair_periodo(valor):
+    """
+    Aceita uma data real do Excel ou texto com uma data.
+
+    Retorna:
+        (data_inicial, data_final)
+
+    A data inicial é o dia seguinte à data extraída.
+    A data final é a mesma data no ano seguinte.
+    """
+
+    if valor is None or not str(valor).strip():
+        return None
+
+    # Caso seja uma data real do Excel.
+    if isinstance(valor, (datetime, date)):
+        data_extraida = valor
+
+    else:
+        texto = str(valor).strip()
+
+        # Identifica o formato pela presença de "/".
+        if "/" in texto:
+            formato = "%d/%m/%Y"
+            padrao = r"\b\d{2}/\d{2}/\d{4}\b"
+        else:
+            formato = "%d.%m.%Y"
+            padrao = r"\b\d{2}\.\d{2}\.\d{4}\b"
+
+        correspondencia = re.search(padrao, texto)
+
+        if not correspondencia:
+            print(f"Nenhuma data reconhecida: {texto}")
+            return None
+
+        try:
+            data_extraida = datetime.strptime(
+                correspondencia.group(0),
+                formato,
+            )
+        except ValueError:
+            print(f"Data inválida: {texto}")
+            return None
+
+    data_inicial = data_extraida + timedelta(days=1)
+
+    try:
+        data_final = data_extraida.replace(
+            year=data_extraida.year + 1,
+        )
+    except ValueError:
+        # Trata 29 de fevereiro em ano não bissexto.
+        data_final = data_extraida.replace(
+            year=data_extraida.year + 1,
+            day=28,
+        )
+
+    return data_inicial, data_final
+
+
+def interpretar_excel_final(planilha):
+    print("\nInterpretando resultados da coluna C...")
+
+    for linha in range(1, planilha.max_row + 1):
+        resultado = planilha.cell(linha, 3).value
+
+        if resultado is None or not str(resultado).strip():
+            continue
+
+        periodo = extrair_periodo(resultado)
+
+        if periodo:
+            data_inicial, data_final = periodo
+
+            planilha.cell(linha, 4).value = (
+                f"{data_inicial:%d.%m.%Y} a {data_final:%d.%m.%Y}"
+            )
+
+            # Coluna E permanece vazia.
+            planilha.cell(linha, 5).value = None
+
+            print(
+                f"Linha {linha}: "
+                f"{planilha.cell(linha, 4).value}"
+            )
+
+    print("Interpretação do Excel concluída.")
+
+
+def verificar_prazo(planilha):
+    """
+    Coluna D: período aquisitivo interpretado.
+    Coluna F: indicação de período incompleto.
+    """
+
+    hoje = datetime.today()
+
+    if hoje.month == 12:
+        inicio_proximo_mes = datetime(hoje.year + 1, 1, 1)
+    else:
+        inicio_proximo_mes = datetime(hoje.year, hoje.month + 1, 1)
+
+    for linha in range(1, planilha.max_row + 1):
+        periodo = planilha.cell(linha, 4).value
+        celula_resultado = planilha.cell(linha, 6)
+
+        celula_resultado.value = None
+
+        if not isinstance(periodo, str):
+            continue
+
+        partes = periodo.split(" a ")
+
+        if len(partes) != 2:
+            continue
+
+        try:
+            data_final = datetime.strptime(
+                partes[1].strip(),
+                "%d.%m.%Y",
+            )
+        except ValueError:
+            continue
+
+        if data_final >= inicio_proximo_mes:
+            celula_resultado.value = "Incompleto"
+            print(f"Linha {linha}: Incompleto")
+
+    print("Verificação de prazos concluída.")
+
+
+def ler_matricula_menu():
+    """
+    Localiza a matrícula usando o mesmo mecanismo de lerControles().
+    """
+    try:
+        janela = Desktop(backend="win32").window(
+            title=TITULO_MENU
+        )
+
+        if not janela.exists(timeout=3):
+            print("Janela do menu não encontrada.")
+            return None
+
+        controles = janela.descendants()
+
+        for controle in controles:
+            try:
+                classe = controle.class_name()
+                texto = controle.window_text().strip()
+                rect = controle.rectangle()
+
+                if (
+                    classe == "TelDBKeyEdit"
+                    and 270 <= rect.top <= 305
+                    and texto.isdigit()
+                ):
+                    matricula = int(texto)
+                    print(f"Matrícula identificada: {matricula}")
+                    return matricula
+
+            except Exception:
+                continue
+
+        print("Campo da matrícula não identificado.")
+
+        # Diagnóstico: exibe os controles candidatos encontrados.
+        print("Controles TelDBKeyEdit encontrados:")
+
+        for controle in controles:
+            try:
+                if controle.class_name() == "TelDBKeyEdit":
+                    rect = controle.rectangle()
+                    print(
+                        f"Texto={controle.window_text()!r} | "
+                        f"Posição=({rect.left}, {rect.top}) | "
+                        f"Tamanho=({rect.width()}x{rect.height()})"
+                    )
+            except Exception:
+                continue
+
+        return None
+
+    except Exception as erro:
+        print(f"Erro ao obter matrícula: {erro}")
+        return None
+
+
+def obter_janela_menu():
+    """
+    Obtém a janela do menu e verifica se ela continua válida.
+    """
+    try:
+        hwnd = encontrar_janela_por_titulo(TITULO_MENU)
+
+        if not hwnd or not win32gui.IsWindow(hwnd):
+            return None
+
+        janela = Desktop(backend="win32").window(handle=hwnd)
+
+        if not janela.exists(timeout=1):
+            return None
+
+        return janela
+
+    except Exception as erro:
+        print(f"Erro ao localizar a janela do menu: {erro}")
+        return None
+
+
+def lerMatricula(nome, numero_linha, planilha):
+    print(f"\nLendo matrícula de: {nome}")
+
+    # Aguarda o menu estar disponível.
+    if not aguardar_estado_menu():
+        print("Menu não está disponível.")
+        return False
+
+    if not ativar_janela(TITULO_MENU):
+        return False
+
+    # Abre a pesquisa de funcionários.
+    print("Abrindo pesquisa...")
+    pyautogui.click(X_INICIAL, Y_INICIAL)
+    time.sleep(INTERVALO)
+
+    # Pesquisa pelo nome.
+    print(f"Pesquisando servidor: {nome}")
+    pyperclip.copy(nome)
+    pyautogui.hotkey("ctrl", "v")
+    time.sleep(INTERVALO)
+
+    pyautogui.press("enter")
+    time.sleep(INTERVALO)
+    pyautogui.press("enter")
+
+    # Aguarda retornar ao menu após selecionar o servidor.
+    if not aguardar_estado_menu(timeout=15):
+        print("O sistema não retornou ao menu.")
+        return False
+
+    # LÊ A MATRÍCULA DO SERVIDOR SELECIONADO.
+    matricula = ler_matricula_menu()
+
+    if matricula is not None:
+        planilha.cell(numero_linha, 1).value = matricula
+
+        print(
+            f"Matrícula {matricula} preenchida na coluna A, "
+            f"linha {numero_linha}."
+        )
+
+        return True
+
+    print(f"Não foi possível obter a matrícula de {nome}.")
+    return False
 
 
 # ============================================================
@@ -449,10 +721,11 @@ def main():
     planilha = workbook.active
 
     try:
+        
         pessoas = []
 
         for numero_linha in range(1, planilha.max_row + 1):
-            valor = planilha.cell(numero_linha, 1).value
+            valor = planilha.cell(numero_linha, 2).value
 
             if valor is not None and str(valor).strip():
                 pessoas.append((numero_linha, str(valor).strip()))
@@ -463,13 +736,15 @@ def main():
 
         print(f"Total de pessoas: {len(pessoas)}")
 
+        pass
+        '''
         print("\nJanelas identificadas:")
         for titulo in listarJanelas():
             print(f"- {titulo}")
 
         for numero_linha, nome in pessoas:
             try:
-                resultado = processar_pessoa(nome, numero_linha)
+                resultado = processar_pessoa(nome, numero_linha, planilha)
 
                 if resultado is not None:
                     planilha.cell(numero_linha, 2).value = resultado
@@ -484,9 +759,40 @@ def main():
 
             except Exception as erro:
                 print(f"Erro na linha {numero_linha}: {erro}")
-
+        '''
     finally:
-        workbook.close()
+        try:
+            interpretar_excel_final(planilha)
+            verificar_prazo(planilha)
+            
+            workbook.save(args.planilha)
+            
+            for numero_linha, nome in pessoas:
+                try:
+                    sucesso = lerMatricula(nome, numero_linha, planilha)
+
+                    if sucesso:
+                        workbook.save(args.planilha)
+
+                    time.sleep(2)
+
+                except KeyboardInterrupt:
+                    print("\nProcessamento interrompido pelo usuário.")
+                    break
+
+                except Exception as erro:
+                    print(f"Erro na linha {numero_linha}: {erro}")
+            
+            print("Planilha salva com sucesso.")
+
+        except PermissionError:
+            print(
+                "\nERRO: Não foi possível salvar a planilha.\n"
+                "Feche o arquivo no Excel e execute novamente."
+            )
+
+        finally:
+            workbook.close()
 
     print("\nProcessamento finalizado.")
 
