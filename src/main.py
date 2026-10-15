@@ -410,7 +410,11 @@ def consultar_resultado(planilha, numero_linha):
     conteudo = copiar_resultado()
 
     if conteudo:
-        return conteudo
+        # Conteúdo retirado da data de admissão: 
+        # deve ser retirado 01 dia e entregar o dia anterior
+        data = datetime.strptime(conteudo.strip(), "%d/%m/%Y")
+        data_anterior = data - timedelta(days=1)
+        return data_anterior.strftime("%d/%m/%Y")
 
     print("Não foi possível copiar o resultado após a recuperação.")
     return ""
