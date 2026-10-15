@@ -542,7 +542,7 @@ def verificar_prazo(planilha):
 
     for linha in range(1, planilha.max_row + 1):
         periodo = planilha.cell(linha, 4).value
-        celula_resultado = planilha.cell(linha, 6)
+        celula_resultado = planilha.cell(linha, 5)
 
         celula_resultado.value = None
 
@@ -651,7 +651,6 @@ def obter_janela_menu():
 def lerMatricula(nome, numero_linha, planilha):
     print(f"\nLendo matrícula de: {nome}")
 
-    # Aguarda o menu estar disponível.
     if not aguardar_estado_menu():
         print("Menu não está disponível.")
         return False
@@ -659,12 +658,10 @@ def lerMatricula(nome, numero_linha, planilha):
     if not ativar_janela(TITULO_MENU):
         return False
 
-    # Abre a pesquisa de funcionários.
     print("Abrindo pesquisa...")
     pyautogui.click(X_INICIAL, Y_INICIAL)
     time.sleep(INTERVALO)
 
-    # Pesquisa pelo nome.
     print(f"Pesquisando servidor: {nome}")
     pyperclip.copy(nome)
     pyautogui.hotkey("ctrl", "v")
@@ -674,12 +671,11 @@ def lerMatricula(nome, numero_linha, planilha):
     time.sleep(INTERVALO)
     pyautogui.press("enter")
 
-    # Aguarda retornar ao menu após selecionar o servidor.
     if not aguardar_estado_menu(timeout=15):
         print("O sistema não retornou ao menu.")
         return False
 
-    # LÊ A MATRÍCULA DO SERVIDOR SELECIONADO.
+    # Lê a matrícula do servidor selecionado.
     matricula = ler_matricula_menu()
 
     if matricula is not None:
@@ -689,13 +685,77 @@ def lerMatricula(nome, numero_linha, planilha):
             f"Matrícula {matricula} preenchida na coluna A, "
             f"linha {numero_linha}."
         )
+    else:
+        print(f"Não foi possível obter a matrícula de {nome}.")
 
-        return True
+        # Lê o status do servidor selecionado.
+    status = ler_status_menu()
 
-    print(f"Não foi possível obter a matrícula de {nome}.")
-    return False
+    if status:
+        # Considera ativo somente o status cujo texto termina em "Ativo".
+        descricao_status = status.split("-", 1)[-1].strip()
+
+        if descricao_status.casefold() != "ativo":
+            celula_status = planilha.cell(numero_linha, 5)
+            status_atual = str(celula_status.value or "").strip()
+
+            if status_atual:
+                celula_status.value = f"{status_atual} / {status}"
+            else:
+                celula_status.value = status
+
+            print(
+                f"Status '{status}' registrado na coluna E, "
+                f"linha {numero_linha}."
+            )
+
+    return matricula is not None
 
 
+def ler_status_menu():
+    """
+    Lê o status do servidor no controle TComboBox.
+    Retorna o texto completo, por exemplo: '00 - Ativo'
+    ou '01 - Licença'.
+    """
+    try:
+        janela = Desktop(backend="win32").window(
+            title=TITULO_MENU
+        )
+
+        if not janela.exists(timeout=3):
+            print("Janela do menu não encontrada.")
+            return None
+
+        for controle in janela.descendants():
+            try:
+                if controle.class_name() != "TComboBox":
+                    continue
+
+                rect = controle.rectangle()
+
+                # Identifica o campo de status pela posição.
+                if (
+                    854 <= rect.left <= 860
+                    and 525 <= rect.top <= 535
+                ):
+                    status = controle.window_text().strip()
+
+                    if status:
+                        print(f"Status identificado: {status}")
+                        return status
+
+            except Exception:
+                continue
+
+        print("Campo de status não identificado.")
+        return None
+
+    except Exception as erro:
+        print(f"Erro ao obter status: {erro}")
+        return None
+
+    
 # ============================================================
 # PROGRAMA PRINCIPAL
 # ============================================================
@@ -736,8 +796,6 @@ def main():
 
         print(f"Total de pessoas: {len(pessoas)}")
 
-        pass
-        '''
         print("\nJanelas identificadas:")
         for titulo in listarJanelas():
             print(f"- {titulo}")
@@ -747,9 +805,9 @@ def main():
                 resultado = processar_pessoa(nome, numero_linha, planilha)
 
                 if resultado is not None:
-                    planilha.cell(numero_linha, 2).value = resultado
+                    planilha.cell(numero_linha, 3).value = resultado
                     workbook.save(args.planilha)
-                    print(f"Resultado salvo na coluna B, linha {numero_linha}.")
+                    print(f"Resultado salvo na coluna C, linha {numero_linha}.")
                 else:
                     print(f"Linha {numero_linha} sem resultado. Seguindo adiante.")
 
@@ -759,7 +817,7 @@ def main():
 
             except Exception as erro:
                 print(f"Erro na linha {numero_linha}: {erro}")
-        '''
+        
     finally:
         try:
             interpretar_excel_final(planilha)
@@ -774,7 +832,7 @@ def main():
                     if sucesso:
                         workbook.save(args.planilha)
 
-                    time.sleep(2)
+                    time.sleep(.5)
 
                 except KeyboardInterrupt:
                     print("\nProcessamento interrompido pelo usuário.")
