@@ -486,7 +486,19 @@ def extrair_periodo(valor):
             print(f"Data inválida: {texto}")
             return None
 
-    data_inicial = data_extraida + timedelta(days=1)
+    # Regra especial: ignorar 29 de fevereiro.
+    if (
+        data_extraida.month == 2
+        and data_extraida.day == 28
+        and data_extraida.year % 4 == 0
+        and (
+            data_extraida.year % 100 != 0
+            or data_extraida.year % 400 == 0
+        )
+    ):
+        data_inicial = data_extraida.replace(month=3, day=1)
+    else:
+        data_inicial = data_extraida + timedelta(days=1)
 
     try:
         data_final = data_extraida.replace(
