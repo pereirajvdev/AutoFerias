@@ -771,7 +771,27 @@ def ler_status_menu():
         print(f"Erro ao obter status: {erro}")
         return None
 
-    
+
+def localizar_janela(titulo_esperado):
+    """
+    Localiza uma janela pelo título ou por um trecho dele.
+    Retorna o objeto da janela ou None se não encontrar.
+    """
+
+    for janela in Desktop(backend="win32").windows():
+        try:
+            titulo = janela.window_text().strip()
+
+            if titulo_esperado.lower() in titulo.lower():
+                print(f"[OK] Janela identificada: {titulo}")
+                return janela
+
+        except Exception:
+            continue
+
+    return None
+
+
 # ============================================================
 # PROGRAMA PRINCIPAL
 # ============================================================
