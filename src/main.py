@@ -8,7 +8,6 @@ from openpyxl.styles import PatternFill
 
 import pyautogui
 import pyperclip
-import win32gui
 from pywinauto import Desktop
 from openpyxl import load_workbook
 
@@ -41,139 +40,9 @@ ROSA_CLARO = PatternFill(
     end_color="FFFFC0CB",
 )
 
-# ============================================================
-# LISTAGEM E IDENTIFICAÇÃO DE JANELAS
-# ============================================================
 
-def listarJanelas():
-    ignorar = {
-        "lidDialog",
-        "DataSetValidDialog",
-        "Chart editor",
-        "Editor de Cross-tab",
-        "Dictionary editor",
-        "Rich Edit",
-        "Task Host Window",
-        "CDA Server",
-        "RadeonSoftware",
-        "WUIconWindow",
-        "OneDrive",
-        "ad_msg_wnd",
-        "Window",
-        "Program Manager",
-        "Default IME",
-        "M",
-    }
-
-    titulos = []
-
-    for janela in Desktop(backend="win32").windows():
-        try:
-            titulo = janela.window_text().strip()
-
-            if not titulo:
-                continue
-
-            if titulo in ignorar:
-                continue
-
-            if "GDI+ Window" in titulo:
-                continue
-
-            if "cmd.exe" in titulo.lower():
-                continue
-
-            if "C:\\Windows" in titulo:
-                continue
-
-            if any(
-                termo.lower() in titulo.lower()
-                for termo in (
-                    "AMD",
-                    "Microsoft",
-                    "Realtek",
-                    "Bluetooth",
-                    "HiddenFax",
-                    ".NET-BroadcastEventWindow",
-                )
-            ):
-                continue
-
-            titulos.append(titulo)
-
-        except Exception:
-            pass
-
-    return titulos
-
-
-def encontrar_janela_por_titulo(titulo_procurado):
-    """
-    Retorna o identificador da primeira janela visível
-    cujo título contenha o texto procurado.
-    """
-    hwnd_encontrado = None
-    titulo_procurado = titulo_procurado.casefold()
-
-    def callback(hwnd, _):
-        nonlocal hwnd_encontrado
-
-        try:
-            titulo = win32gui.GetWindowText(hwnd).strip()
-
-            if (
-                win32gui.IsWindowVisible(hwnd)
-                and titulo_procurado in titulo.casefold()
-            ):
-                hwnd_encontrado = hwnd
-                return False
-
-        except Exception:
-            pass
-
-        return True
-
-    win32gui.EnumWindows(callback, None)
-    return hwnd_encontrado
-
-
-def menu_aberto():
-    return encontrar_janela_por_titulo(TITULO_MENU) is not None
-
-
-def cadastro_aberto():
-    return encontrar_janela_por_titulo(TITULO_CADASTRO) is not None
-
-
-def aguardar_estado_menu(timeout=30):
-    """
-    Aguarda até que o Menu esteja aberto e o Cadastro de Férias
-    esteja fechado.
-    """
-    limite = time.time() + timeout
-
-    while time.time() < limite:
-        if menu_aberto() and not cadastro_aberto():
-            return True
-
-        time.sleep(INTERVALO_VERIFICACAO)
-
-    return False
-
-
-def aguardar_estado_cadastro(timeout=30):
-    """
-    Aguarda até que a janela Cadastro de Férias esteja aberta.
-    """
-    limite = time.time() + timeout
-
-    while time.time() < limite:
-        if cadastro_aberto():
-            return True
-
-        time.sleep(INTERVALO_VERIFICACAO)
-
-    return False
+TEMPO_LIMITE = 60
+INTERVALO_VERIFICACAO = 1
 
 
 # ============================================================
@@ -202,163 +71,111 @@ def processar_pessoa(nome, numero_linha, planilha):
     print(f"\n{'=' * 50}")
     print(f"Linha {numero_linha}: {nome}")
 
-    # ETAPA 1: estado inicial.
+    # ETAPA 1: aguardar o Menu.
     print("Esperando Menu aberto e Cadastro de Férias fechado...")
 
-    if not aguardar_estado_menu():
-        print("Estado inicial não encontrado.")
-        return None
+    janela = aguardar_janela(TITULO_MENU)
+    janela.set_focus()
 
-    print(f"Janela encontrada: {TITULO_MENU}")
-
-    if not ativar_janela(TITULO_MENU):
-        return None
-
-    # ETAPA 2: abrir pesquisa.
+    # ETAPA 2: abrir a pesquisa.
     print("Abrindo pesquisa...")
     pyautogui.click(X_INICIAL, Y_INICIAL)
-    time.sleep(INTERVALO)
+
+    janela = aguardar_janela(TITULO_PESQUISA)
+    janela.set_focus()
 
     # ETAPA 3: pesquisar o servidor.
     print(f"Pesquisando servidor: {nome}")
 
     pyperclip.copy(nome)
     pyautogui.hotkey("ctrl", "v")
-    time.sleep(INTERVALO)
 
-    print("Pressionando primeiro Enter...")
+    print("Retornando ao menu...")
     pyautogui.press("enter")
-    time.sleep(INTERVALO)
-
-    print("Pressionando segundo Enter...")
     pyautogui.press("enter")
 
-    # ETAPA 4: confirmar o retorno ao Menu.
-    print("Aguardando retorno ao Menu...")
-
-    if not aguardar_estado_menu(timeout=15):
-        print("O sistema não retornou ao Menu.")
-        return None
-
-    print(f"Janela encontrada: {TITULO_MENU}")
+    # ETAPA 4: voltar ao Menu.
+    janela = aguardar_janela(TITULO_MENU)
+    janela.set_focus()
 
     # ETAPA 5: abrir Cadastro de Férias.
-    if not ativar_janela(TITULO_MENU):
-        return None
-
     print("Abrindo Cadastro de Férias...")
     pyautogui.click(X_CONSULTA, Y_CONSULTA)
 
-    # Aguarda a janela correta aparecer.
-    if not ativar_janela(TITULO_CADASTRO, timeout=30):
-        print("Não foi possível abrir Cadastro de Férias.")
-        return None
+    janela = aguardar_janela(TITULO_CADASTRO)
+    janela.set_focus()
 
-    # ETAPA 6: consultar e tentar copiar o resultado duas vezes.
+    # ETAPA 6: consultar o resultado.
     conteudo = consultar_resultado(planilha, numero_linha)
 
     if not conteudo:
         print(
-            f"Nenhum conteúdo copiado após 2 tentativas para: {nome}. "
+            f"Nenhum conteúdo copiado após as tentativas para: {nome}. "
             "Prosseguindo para a próxima pessoa."
         )
 
-        # Fecha o cadastro somente se ainda estiver aberto.
-        if cadastro_aberto():
-            print("Fechando Cadastro de Férias com Esc...")
-            pyautogui.press("esc")
-
-            aguardar_fechamento_janela(
-                TITULO_CADASTRO,
-                timeout=15,
-            )
+        print("Fechando Cadastro de Férias com Esc...")
+        pyautogui.press("esc")
 
         return None
 
-    # ETAPA 7: resultado copiado; fecha Cadastro de Férias.
-    if not cadastro_aberto():
-        print("Cadastro de Férias já está fechado.")
-        return conteudo
+    if janela is not None and janela.window_text().strip() == TITULO_CADASTRO:
+        # ETAPA 7: fechar o cadastro.
+        print("Fechando Cadastro de Férias com Esc...")
+        pyautogui.press("esc")
 
-    print("Fechando Cadastro de Férias com Esc...")
-    pyautogui.press("esc")
-
-    aguardar_fechamento_janela(
-        TITULO_CADASTRO,
-        timeout=15,
-    )
+    janela = aguardar_janela(TITULO_MENU)
+    janela.set_focus()
 
     print(f"Processamento concluído: {nome}")
     return conteudo
 
 
-def aguardar_janela_pesquisa(timeout=15):
-    limite = time.time() + timeout
+# ============================================================
+# IDENTIFICAÇÃO E ESPERA DE JANELAS
+# ============================================================
 
-    while time.time() < limite:
-        hwnd = encontrar_janela_por_titulo(TITULO_PESQUISA)
+def localizar_janela(titulo_esperado):
+    """
+    Localiza uma janela pelo título ou por um trecho dele.
+    Retorna um objeto pywinauto ou None.
+    """
+    for janela in Desktop(backend="win32").windows():
+        try:
+            titulo = janela.window_text().strip()
 
-        if hwnd:
-            print("Janela de pesquisa detectada.")
-            return hwnd
+            if titulo_esperado.casefold() in titulo.casefold():
+                print(f"[OK] Janela identificada: {titulo}")
+                return janela
 
-        time.sleep(0.2)
+        except Exception:
+            continue
 
-    print("A janela de pesquisa não foi encontrada.")
     return None
 
 
-def aguardar_janela(titulo, timeout=15):
-    print(f"Esperando janela: {titulo}")
+def aguardar_janela(titulo_esperado, timeout=TEMPO_LIMITE):
+    """
+    Aguarda até a janela aparecer.
+    Retorna o objeto da janela ou None se atingir o limite.
+    """
+    print(f"[INFO] Aguardando a janela: {titulo_esperado}")
 
-    limite = time.time() + timeout
+    limite = time.monotonic() + timeout
 
-    while time.time() < limite:
-        hwnd = encontrar_janela_por_titulo(titulo)
+    while time.monotonic() < limite:
+        janela = localizar_janela(titulo_esperado)
 
-        if hwnd:
-            print(f"Janela encontrada: {win32gui.GetWindowText(hwnd)}")
-            return hwnd
+        if janela is not None:
+            return janela
 
-        time.sleep(0.2)
+        time.sleep(INTERVALO_VERIFICACAO)
 
-    print(f"Tempo esgotado. Janela não encontrada: {titulo}")
+    print(
+        f"[ERRO] A janela '{titulo_esperado}' "
+        f"não apareceu em {timeout} segundos."
+    )
     return None
-
-
-def aguardar_fechamento_janela(titulo, timeout=15):
-    print(f"Esperando fechar a janela: {titulo}")
-
-    limite = time.time() + timeout
-
-    while time.time() < limite:
-        hwnd = encontrar_janela_por_titulo(titulo)
-
-        if not hwnd:
-            print(f"Janela fechada: {titulo}")
-            return True
-
-        time.sleep(0.2)
-
-    print(f"A janela continua aberta: {titulo}")
-    return False
-
-
-def ativar_janela(titulo, timeout=15):
-    hwnd = aguardar_janela(titulo, timeout)
-
-    if not hwnd:
-        print(f"Janela não encontrada: {titulo}")
-        return False
-
-    try:
-        win32gui.SetForegroundWindow(hwnd)
-        time.sleep(0.3)
-        print(f"Janela ativa: {win32gui.GetWindowText(hwnd)}")
-        return True
-    except Exception as erro:
-        print(f"Não foi possível ativar '{titulo}': {erro}")
-        return False
 
 
 def copiar_resultado():
@@ -382,42 +199,47 @@ def copiar_resultado():
 def consultar_resultado(planilha, numero_linha):
     """
     Tenta copiar o resultado.
-    Se falhar, executa a recuperação e tenta copiar novamente.
+    Se falhar, executa a recuperação e tenta novamente.
+    A data copiada é convertida para o dia anterior.
     """
-
-    if not cadastro_aberto():
-        print("Consulta cancelada: Cadastro de Férias não está aberto.")
-        return ""
 
     print("Tentando copiar o resultado...")
 
     pyautogui.click(X_DATA, Y_DATA)
+    pyautogui.click(X_DATA, Y_DATA)
     time.sleep(INTERVALO)
 
-    if cadastro_aberto():
-        conteudo = copiar_resultado()
-
-        if conteudo:
-            return conteudo
-
-    print("Falha na primeira cópia. Iniciando recuperação...")
-
-    recuperar_copia(planilha, numero_linha)
-
-    # A recuperação já retornou a tela ao Menu.
-    # Não pressionar Esc novamente.
-    print("Tentando Ctrl+C novamente...")
     conteudo = copiar_resultado()
 
-    if conteudo:
-        # Conteúdo retirado da data de admissão: 
-        # deve ser retirado 01 dia e entregar o dia anterior
-        data = datetime.strptime(conteudo.strip(), "%d/%m/%Y")
-        data_anterior = data - timedelta(days=1)
-        return data_anterior.strftime("%d/%m/%Y")
+    if not conteudo:
+        print("Falha na primeira cópia. Iniciando recuperação...")
 
-    print("Não foi possível copiar o resultado após a recuperação.")
-    return ""
+        recuperar_copia(planilha, numero_linha)
+
+        # Recuperar a tela do Menu e colocar o foco nela.
+        janela = aguardar_janela(TITULO_MENU)
+        janela.set_focus()
+
+        print("Tentando Ctrl+C novamente...")
+        conteudo = copiar_resultado()
+
+    if not conteudo:
+        print("Não foi possível copiar o resultado após a recuperação.")
+        return ""
+
+    try:
+        data = datetime.strptime(conteudo.strip(), "%d/%m/%Y")
+    except ValueError:
+        print(f"O conteúdo copiado não é uma data válida: {conteudo!r}")
+        return ""
+
+    data_anterior = data - timedelta(days=1)
+
+    resultado = data_anterior.strftime("%d/%m/%Y")
+
+    print(f"Data ajustada: {resultado}")
+
+    return resultado
 
 
 def recuperar_copia(planilha, numero_linha):
@@ -642,43 +464,33 @@ def ler_matricula_menu():
         return None
 
 
-def obter_janela_menu():
-    """
-    Obtém a janela do menu e verifica se ela continua válida.
-    """
-    try:
-        hwnd = encontrar_janela_por_titulo(TITULO_MENU)
-
-        if not hwnd or not win32gui.IsWindow(hwnd):
-            return None
-
-        janela = Desktop(backend="win32").window(handle=hwnd)
-
-        if not janela.exists(timeout=1):
-            return None
-
-        return janela
-
-    except Exception as erro:
-        print(f"Erro ao localizar a janela do menu: {erro}")
-        return None
-
-
 def lerMatricula(nome, numero_linha, planilha):
     print(f"\nLendo matrícula de: {nome}")
 
-    if not aguardar_estado_menu():
-        print("Menu não está disponível.")
+    # Garantir que o Menu esteja disponível.
+    janela = aguardar_janela(TITULO_MENU)
+
+    if janela is None:
+        print("Não foi possível localizar o Menu.")
         return False
 
-    if not ativar_janela(TITULO_MENU):
-        return False
+    janela.set_focus()
 
+    # Abrir a pesquisa.
     print("Abrindo pesquisa...")
     pyautogui.click(X_INICIAL, Y_INICIAL)
-    time.sleep(INTERVALO)
 
+    janela = aguardar_janela(TITULO_PESQUISA, timeout=15)
+
+    if janela is None:
+        print("A janela de pesquisa não foi aberta.")
+        return False
+
+    janela.set_focus()
+
+    # Pesquisar o servidor.
     print(f"Pesquisando servidor: {nome}")
+
     pyperclip.copy(nome)
     pyautogui.hotkey("ctrl", "v")
     time.sleep(INTERVALO)
@@ -687,11 +499,15 @@ def lerMatricula(nome, numero_linha, planilha):
     time.sleep(INTERVALO)
     pyautogui.press("enter")
 
-    if not aguardar_estado_menu(timeout=15):
-        print("O sistema não retornou ao menu.")
+    janela = aguardar_janela(TITULO_MENU)
+
+    if janela is None:
+        print("O Menu não foi localizado após a pesquisa.")
         return False
 
-    # Lê a matrícula do servidor selecionado.
+    janela.set_focus()
+
+    # Ler e registrar a matrícula.
     matricula = ler_matricula_menu()
 
     if matricula is not None:
@@ -704,11 +520,10 @@ def lerMatricula(nome, numero_linha, planilha):
     else:
         print(f"Não foi possível obter a matrícula de {nome}.")
 
-        # Lê o status do servidor selecionado.
+    # Ler o status do servidor.
     status = ler_status_menu()
 
     if status:
-        # Considera ativo somente o status cujo texto termina em "Ativo".
         descricao_status = status.split("-", 1)[-1].strip()
 
         if descricao_status.casefold() != "ativo":
@@ -772,23 +587,53 @@ def ler_status_menu():
         return None
 
 
+# ============================================================
+# IDENTIFICAÇÃO E ESPERA DE JANELAS
+# ============================================================
+
 def localizar_janela(titulo_esperado):
     """
     Localiza uma janela pelo título ou por um trecho dele.
     Retorna o objeto da janela ou None se não encontrar.
     """
-
     for janela in Desktop(backend="win32").windows():
         try:
             titulo = janela.window_text().strip()
 
-            if titulo_esperado.lower() in titulo.lower():
+            if titulo_esperado.casefold() in titulo.casefold():
                 print(f"[OK] Janela identificada: {titulo}")
                 return janela
 
         except Exception:
             continue
 
+    return None
+
+
+def aguardar_janela(
+    titulo_esperado,
+    timeout=TEMPO_LIMITE,
+):
+    """
+    Aguarda a janela aparecer.
+    Retorna o objeto da janela ou None se atingir o limite.
+    """
+    print(f"[INFO] Aguardando a janela: {titulo_esperado}")
+
+    limite = time.monotonic() + timeout
+
+    while time.monotonic() < limite:
+        janela = localizar_janela(titulo_esperado)
+
+        if janela is not None:
+            return janela
+
+        time.sleep(INTERVALO_VERIFICACAO)
+
+    print(
+        f"[ERRO] A janela '{titulo_esperado}' "
+        f"não apareceu em {timeout} segundos."
+    )
     return None
 
 
@@ -833,8 +678,6 @@ def main():
         print(f"Total de pessoas: {len(pessoas)}")
 
         print("\nJanelas identificadas:")
-        for titulo in listarJanelas():
-            print(f"- {titulo}")
 
         for numero_linha, nome in pessoas:
             try:
