@@ -606,6 +606,7 @@ def consultar_resultado(sessao, numero_linha):
     if not conteudo:
         conteudo = copiar_resultado(timeout=TIMEOUT_COPIA_LENTA)
 
+    adicional = 0
     if not conteudo:
         log("Falha na primeira cópia. Iniciando recuperação...")
 
@@ -617,6 +618,8 @@ def consultar_resultado(sessao, numero_linha):
         log("Tentando Ctrl+C novamente...")
         conteudo = copiar_resultado(timeout=TIMEOUT_COPIA_LENTA)
 
+        adicional = 1
+
     if not conteudo:
         log("Não foi possível copiar o resultado após a recuperação.")
         return ""
@@ -627,7 +630,7 @@ def consultar_resultado(sessao, numero_linha):
         log(f"O conteúdo copiado não é uma data válida: {conteudo!r}")
         return ""
 
-    resultado = (data - timedelta(days=1)).strftime("%d/%m/%Y")
+    resultado = (data - timedelta(days=adicional)).strftime("%d/%m/%Y")
 
     log(f"Data ajustada: {resultado}")
 
@@ -859,6 +862,8 @@ def pesquisar_servidor(nome):
 
     _colocar_na_area_de_transferencia(nome)
     atalho("ctrl", "v")
+    
+    time.sleep(0.1)
     time.sleep(ESPERA_TECLAS)
 
     pressionar("enter")
@@ -1011,6 +1016,7 @@ def extrair_periodo(valor):
     bissexto, que vai para 01/03 — regra especial preservada).
     A data final é a mesma data no ano seguinte.
     """
+
     if valor is None or not str(valor).strip():
         return None
 
