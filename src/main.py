@@ -3,6 +3,7 @@ Automação de Férias — versão refatorada e otimizada.
 
 Uso:
     python main.py planilha.xlsx            # execução normal
+    python main.py planilha.xlsx --sec      # Modo para levantamento por secretaria
     python main.py planilha.xlsx --perf     # com relatório de desempenho
     python main.py planilha.xlsx --verbose  # logs detalhados de janelas
     python main.py planilha.xlsx --fluxo-legado
@@ -1070,13 +1071,21 @@ def extrair_periodo(valor):
 
 
 @cronometrar("interpretar_excel_final")
-def interpretar_excel_final(planilha):
-    """Coluna C (resultado) -> coluna D (período) e limpa a coluna E."""
+def interpretar_excel_final(planilha, data_limite=None):
+    """
+    Coluna C (resultado) -> coluna D (períodos) e limpa a coluna E.
+
+    Quando data_limite é informada, acrescenta os períodos anuais
+    completos até essa data, separados por '; '.
+    """
     log("\nInterpretando resultados da coluna C...")
 
     interpretadas = 0
 
-    for celula_c, celula_d, celula_e in planilha.iter_rows(min_col=3, max_col=5):
+    for celula_c, celula_d, celula_e in planilha.iter_rows(
+        min_col=3,
+        max_col=5,
+    ):
         resultado = celula_c.value
 
         if resultado is None or not str(resultado).strip():
@@ -1084,14 +1093,39 @@ def interpretar_excel_final(planilha):
 
         periodo = extrair_periodo(resultado)
 
-        if periodo:
-            data_inicial, data_final = periodo
+        if not periodo:
+            continue
 
-            celula_d.value = f"{data_inicial:%d.%m.%Y} a {data_final:%d.%m.%Y}"
-            celula_e.value = None
+        data_inicial, data_final = periodo
+        periodos = []
+
+        while data_limite is None or data_final.date() <= data_limite:
+            periodos.append(
+                f"{data_inicial:%d.%m.%Y} a {data_final:%d.%m.%Y}"
+            )
+
+            if data_limite is None:
+                break
+
+            data_inicial = data_final + timedelta(days=1)
+
+            try:
+                data_final = data_final.replace(
+                    year=data_final.year + 1
+                )
+            except ValueError:
+                data_final = data_final.replace(
+                    year=data_final.year + 1,
+                    day=28,
+                )
+
+        celula_d.value = "; ".join(periodos) if periodos else None
+        celula_e.value = None
+
+        if periodos:
             interpretadas += 1
 
-            log_detalhe(f"Linha {celula_c.row}: {celula_d.value}")
+        log_detalhe(f"Linha {celula_c.row}: {celula_d.value}")
 
     log(f"Interpretação do Excel concluída ({interpretadas} períodos).")
 
@@ -1116,7 +1150,10 @@ def verificar_prazo(planilha):
         if not isinstance(periodo, str):
             continue
 
-        partes = periodo.split(" a ")
+        partes_periodos = periodo.split(";")
+        ultimo_periodo = partes_periodos[-1].strip()
+
+        partes = ultimo_periodo.split(" a ")
 
         if len(partes) != 2:
             continue
@@ -1221,13 +1258,13 @@ def fase_recuperacao_matriculas(sessao, pessoas):
     return False
 
 
-def finalizar(sessao, pessoas, interrompido):
+def finalizar(sessao, pessoas, interrompido, data_limite=None):
     """Interpreta datas, completa matrículas, aplica status e salva."""
     salvador = sessao.salvador
     planilha = sessao.planilha
 
     try:
-        interpretar_excel_final(planilha)
+        interpretar_excel_final(planilha, data_limite)
         verificar_prazo(planilha)
         salvador.marcar()
 
@@ -1303,7 +1340,7 @@ def executar(args):
 
     finally:
         try:
-            finalizar(sessao, pessoas, interrompido)
+            finalizar(sessao, pessoas, interrompido, args.sec)
         finally:
             workbook.close()
 
@@ -1321,6 +1358,12 @@ def main():
         "planilha",
         type=Path,
         help="Caminho da planilha Excel.",
+    )
+    parser.add_argument(
+        "--sec",
+        type=lambda valor: datetime.strptime(valor, "%d/%m/%Y").date(),
+        metavar="DD/MM/AAAA",
+        help="Gera os períodos completos até a data informada.",
     )
     parser.add_argument(
         "--perf",
