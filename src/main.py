@@ -844,7 +844,7 @@ class Sessao:
 # ============================================================
 
 @cronometrar("pesquisar_servidor")
-def pesquisar_servidor(nome):
+def pesquisar_servidor(nome, proximo=False):
     """
     Menu -> Pesquisa -> cola o nome -> Enter, Enter -> volta ao Menu.
     Ao retornar, o Menu está com foco e exibindo o servidor pesquisado.
@@ -866,8 +866,11 @@ def pesquisar_servidor(nome):
     
     time.sleep(0.1)
     time.sleep(ESPERA_TECLAS)
-
+    
     pressionar("enter")
+
+    if proximo: pressionar("down")
+
     time.sleep(ESPERA_TECLAS)
     pressionar("enter")
 
@@ -946,6 +949,16 @@ def fechar_cadastro(hwnd_cadastro, forcar=False):
     aguardar_janela_fechada(TITULO_CADASTRO)
 
 
+def get_status(nome, numero_linha, sessao):
+    if sessao.ler_menu_junto:
+        try:
+            registrar_dados_menu(nome, numero_linha, sessao)
+        except Exception as erro:
+            log(f"Erro ao ler matrícula/status de {nome}: {erro}")
+
+    return sessao.status.get(numero_linha, "")
+
+
 @cronometrar("processar_pessoa")
 def processar_pessoa(nome, numero_linha, sessao):
     log(f"\n{'=' * 50}")
@@ -956,22 +969,24 @@ def processar_pessoa(nome, numero_linha, sessao):
 
     # Matrícula e status já estão na tela: lê agora, evitando uma segunda
     # pesquisa deste mesmo servidor na fase seguinte.
-    if sessao.ler_menu_junto:
-        try:
-            registrar_dados_menu(nome, numero_linha, sessao)
-        except Exception as erro:
-            log(f"Erro ao ler matrícula/status de {nome}: {erro}")
-
-    status = sessao.status.get(numero_linha, "")
-
-    if status.strip() == "03 - Demitido":
-        sessao.planilha.cell(numero_linha, 3).value = None
-        sessao.planilha.cell(numero_linha, 4).value = None
-        sessao.salvador.marcar()
-
-        log(f"Servidor demitido: {nome}. Pulando processamento.")
-        return None
     
+    status = get_status(nome, numero_linha, sessao)
+
+    if status.strip() == "03 - Demitido":     
+
+        pesquisar_servidor(nome, True)
+        status = get_status(nome, numero_linha, sessao)
+
+        print(f"Deveria estar na {TITULO_MENU}")
+
+        if status.strip() == "03 - Demitido":
+            sessao.planilha.cell(numero_linha, 3).value = None
+            sessao.planilha.cell(numero_linha, 4).value = None
+            sessao.salvador.marcar()
+
+            log(f"Servidor demitido: {nome}. Pulando processamento.")
+            return None
+
     # ETAPA 5: abrir Cadastro de Férias.
     log("Abrindo Cadastro de Férias...")
     clicar(X_CONSULTA, Y_CONSULTA)
