@@ -962,6 +962,16 @@ def processar_pessoa(nome, numero_linha, sessao):
         except Exception as erro:
             log(f"Erro ao ler matrícula/status de {nome}: {erro}")
 
+    status = sessao.status.get(numero_linha, "")
+
+    if status.strip() == "03 - Demitido":
+        sessao.planilha.cell(numero_linha, 3).value = None
+        sessao.planilha.cell(numero_linha, 4).value = None
+        sessao.salvador.marcar()
+
+        log(f"Servidor demitido: {nome}. Pulando processamento.")
+        return None
+    
     # ETAPA 5: abrir Cadastro de Férias.
     log("Abrindo Cadastro de Férias...")
     clicar(X_CONSULTA, Y_CONSULTA)
