@@ -1094,14 +1094,38 @@ def extrair_periodo(valor):
 
     return data_inicial, data_final
 
+MARCA_INCOMPLETO = "(Incompleto)"
+
+
+def _um_ano_depois(data):
+    """Mesma data no ano seguinte (29/02 -> 28/02 em ano não bissexto)."""
+    try:
+        return data.replace(year=data.year + 1)
+    except ValueError:
+        return data.replace(year=data.year + 1, day=28)
+
+
+def _marcar_incompleto(texto):
+    """Acrescenta '(Incompleto)' ao texto, sem duplicar."""
+    texto = texto.rstrip()
+
+    if texto.endswith(MARCA_INCOMPLETO):
+        return texto
+
+    return f"{texto} {MARCA_INCOMPLETO}"
+
 
 @cronometrar("interpretar_excel_final")
 def interpretar_excel_final(planilha, data_limite=None):
     """
     Coluna C (resultado) -> coluna D (períodos) e limpa a coluna E.
 
-    Quando data_limite é informada, acrescenta os períodos anuais
-    completos até essa data, separados por '; '.
+    Modo normal (data_limite None): um único período por linha.
+
+    Modo --sec: acrescenta os períodos anuais COMPLETOS até data_limite,
+    separados por '; '. Períodos incompletos são descartados; o único caso
+    em que '(Incompleto)' permanece é quando não há nenhum período
+    completo para listar (então entra o primeiro período, marcado).
     """
     log("\nInterpretando resultados da coluna C...")
 
@@ -1124,31 +1148,32 @@ def interpretar_excel_final(planilha, data_limite=None):
         data_inicial, data_final = periodo
         periodos = []
 
-        while data_limite is None or data_final.date() <= data_limite:
+        if data_limite is None:
             periodos.append(
                 f"{data_inicial:%d.%m.%Y} a {data_final:%d.%m.%Y}"
             )
-
-            if data_limite is None:
-                break
-
-            data_inicial = data_final + timedelta(days=1)
-
-            try:
-                data_final = data_final.replace(
-                    year=data_final.year + 1
-                )
-            except ValueError:
-                data_final = data_final.replace(
-                    year=data_final.year + 1,
-                    day=28,
+        else:
+            # Somente períodos completos (fim <= data-limite).
+            while data_final.date() <= data_limite:
+                periodos.append(
+                    f"{data_inicial:%d.%m.%Y} a {data_final:%d.%m.%Y}"
                 )
 
-        celula_d.value = "; ".join(periodos) if periodos else None
+                data_inicial = data_final + timedelta(days=1)
+                data_final = _um_ano_depois(data_final)
+
+            # Nenhum completo: data_inicial/data_final ainda são os do
+            # primeiro período, que entra marcado como incompleto.
+            if not periodos:
+                periodos.append(
+                    _marcar_incompleto(
+                        f"{data_inicial:%d.%m.%Y} a {data_final:%d.%m.%Y}"
+                    )
+                )
+
+        celula_d.value = "; ".join(periodos)
         celula_e.value = None
-
-        if periodos:
-            interpretadas += 1
+        interpretadas += 1
 
         log_detalhe(f"Linha {celula_c.row}: {celula_d.value}")
 
@@ -1156,11 +1181,15 @@ def interpretar_excel_final(planilha, data_limite=None):
 
 
 @cronometrar("verificar_prazo")
-def verificar_prazo(planilha):
+@cronometrar("verificar_prazo")
+def verificar_prazo(planilha, modo_sec=False):
     """
     Coluna D: período aquisitivo interpretado.
     Coluna E: "Incompleto" quando o fim do período cai a partir do
     primeiro dia do próximo mês.
+
+    Em modo_sec a indicação já está na própria coluna D (texto
+    '(Incompleto)'), então a coluna E é apenas limpa, como sempre foi.
     """
     hoje = datetime.today()
     mes_atual = (hoje.year, hoje.month)
@@ -1169,6 +1198,9 @@ def verificar_prazo(planilha):
 
     for _celula_c, celula_d, celula_e in planilha.iter_rows(min_col=3, max_col=5):
         celula_e.value = None
+
+        if modo_sec:
+            continue
 
         periodo = celula_d.value
 
@@ -1194,7 +1226,8 @@ def verificar_prazo(planilha):
             incompletos += 1
             log_detalhe(f"Linha {celula_d.row}: Incompleto")
 
-    log(f"Verificação de prazos concluída ({incompletos} incompletos).")
+    if not modo_sec:
+        log(f"Verificação de prazos concluída ({incompletos} incompletos).")
 
 
 def aplicar_status_menu(sessao):
@@ -1290,7 +1323,7 @@ def finalizar(sessao, pessoas, interrompido, data_limite=None):
 
     try:
         interpretar_excel_final(planilha, data_limite)
-        verificar_prazo(planilha)
+        verificar_prazo(planilha, modo_sec=data_limite is not None)
         salvador.marcar()
 
         # Quem não teve a matrícula lida no 1º passe (erro no meio do fluxo
@@ -1372,6 +1405,14 @@ def executar(args):
     log("\nProcessamento finalizado.")
 
 
+def _data_br(valor):
+    try:
+        return datetime.strptime(valor, "%d/%m/%Y").date()
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"data inválida: {valor!r} (use DD/MM/AAAA)"
+        )
+    
 def main():
     global PERF_ATIVO, VERBOSO
 
@@ -1386,9 +1427,16 @@ def main():
     )
     parser.add_argument(
         "--sec",
-        type=lambda valor: datetime.strptime(valor, "%d/%m/%Y").date(),
+        nargs="?",
+        type=_data_br,
+        const=date.today(),   # usado quando "--sec" vem sem data
+        default=None,         # sem --sec: modo normal
         metavar="DD/MM/AAAA",
-        help="Gera os períodos completos até a data informada.",
+        help=(
+            "Modo secretaria: gera os períodos até a data informada "
+            "(ou até hoje, se omitida). O último período é incluído "
+            "mesmo incompleto, marcado com '(Incompleto)'."
+        ),
     )
     parser.add_argument(
         "--perf",
